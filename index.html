@@ -123,6 +123,19 @@
         particle.fillRect(0, 0, 4, 4);
         particle.generateTexture('particle', 4, 4);
         particle.destroy();
+
+        // Trail particle textures for both dimensions
+        const trailParticleLight = this.add.graphics();
+        trailParticleLight.fillStyle(0x5f5fff);
+        trailParticleLight.fillRect(0, 0, 2, 2);
+        trailParticleLight.generateTexture('trail_particle_light', 2, 2);
+        trailParticleLight.destroy();
+
+        const trailParticleDark = this.add.graphics();
+        trailParticleDark.fillStyle(0xff5f5f);
+        trailParticleDark.fillRect(0, 0, 2, 2);
+        trailParticleDark.generateTexture('trail_particle_dark', 2, 2);
+        trailParticleDark.destroy();
       }
 
       create() {
@@ -130,6 +143,7 @@
         this.score = 0;
         this.lives = 3;
         this.dimension = 0;
+        this.levelTransitioning = false; // Prevent multiple level transitions
         
         this.physics.world.setBounds(0, 0, WORLD_WIDTH, GAME_HEIGHT);
         
@@ -156,16 +170,19 @@
           emitting: false
         });
         
-        // Create player trail emitter
-        this.playerTrail = this.add.particles(0, 0, 'particle', {
-          speed: { min: 10, max: 30 },
-          scale: { start: 2, end: 0.5 }, // Much bigger particles
-          lifespan: 600, // Longer lasting
-          frequency: 20, // Very frequent
+        // Create player trail emitter (start with light dimension texture)
+        this.playerTrail = this.add.particles(0, 0, 'trail_particle_light', {
+          speed: { min: 20, max: 50 },
+          scale: { start: 1.5, end: 0 },
+          lifespan: 300,
+          frequency: 30,
           emitting: false,
-          alpha: { start: 1, end: 0 }, // Fully opaque at start
-          quantity: 3, // More particles per emission
-          blendMode: 'ADD' // Make them glow
+          alpha: { start: 0.8, end: 0 },
+          quantity: 2,
+          blendMode: 'ADD',
+          // Add some spread to make the trail more interesting
+          angle: { min: -30, max: 30 },
+          gravityY: 0 // No gravity on trail particles
         });
         
         this.generateLevel();
@@ -215,6 +232,10 @@
           console.log(`Player Y position: ${this.player.y}, GAME_HEIGHT: ${GAME_HEIGHT}`);
         }
 
+        // Track player movement for trail effect
+        const playerSpeed = Math.abs(this.player.body.velocity.x) + Math.abs(this.player.body.velocity.y);
+        const isMoving = playerSpeed > 20; // Only show trail when moving with some speed
+
         // Handle movement with both arrow keys and WASD
         if (this.cursors.left.isDown || this.wasd.A.isDown) {
           this.player.setVelocityX(-160);
@@ -248,6 +269,42 @@
           this.player.jumpState = 'falling';
           this.player.body.setGravityY(600);
         }
+
+        // Update trail effect
+        if (isMoving) {
+          // Position the trail emitter behind the player based on movement direction
+          const offsetX = this.player.body.velocity.x > 0 ? -8 : 8; // Trail behind movement
+          this.playerTrail.setPosition(this.player.x + offsetX, this.player.y + 8); // Slightly below center
+          
+          // Change trail texture based on dimension
+          const trailTexture = this.dimension === 0 ? 'trail_particle_light' : 'trail_particle_dark';
+          if (this.playerTrail.texture.key !== trailTexture) {
+            // Recreate the emitter with the new texture
+            this.playerTrail.destroy();
+            this.playerTrail = this.add.particles(this.player.x + offsetX, this.player.y + 8, trailTexture, {
+              speed: { min: 20, max: 50 },
+              scale: { start: 1.5, end: 0 },
+              lifespan: 300,
+              frequency: 30,
+              emitting: true,
+              alpha: { start: 0.8, end: 0 },
+              quantity: 2,
+              blendMode: 'ADD',
+              angle: { min: -30, max: 30 },
+              gravityY: 0
+            });
+          } else {
+            // Start emitting if not already
+            if (!this.playerTrail.emitting) {
+              this.playerTrail.start();
+            }
+          }
+        } else {
+          // Stop trail when not moving
+          if (this.playerTrail.emitting) {
+            this.playerTrail.stop();
+          }
+        }
         
         // Dimension shift with spacebar
         if (Phaser.Input.Keyboard.JustDown(this.spaceKey)) {
@@ -261,9 +318,11 @@
           return; // Exit early to prevent other updates
         }
         
-        // Check portal collision manually
-        if (this.portal && Phaser.Geom.Intersects.RectangleToRectangle(this.player.getBounds(), this.portal.getBounds())) {
-          console.log('Portal collision detected! Advancing to next level...');
+        // Check portal collision manually (with debouncing to prevent multiple triggers)
+        if (this.portal && this.portal.visible && !this.levelTransitioning && 
+            Phaser.Geom.Intersects.RectangleToRectangle(this.player.getBounds(), this.portal.getBounds())) {
+          console.log(`Portal collision detected! Current level: ${this.level}, advancing to next level...`);
+          this.levelTransitioning = true; // Prevent multiple triggers
           this.nextLevel();
         }
         
@@ -395,16 +454,20 @@
           this.portal.setVisible(false);
         }
         
+        // Store current level for the completion message
+        const completedLevel = this.level;
+        
+        // Increment level
         this.level++;
         this.levelText.setText('Level: ' + this.level);
         
-        // Create level complete message
+        // Create level complete message using the completed level number
         const overlay = this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.7)
           .setOrigin(0)
           .setScrollFactor(0);
         
         const levelText = this.add.text(GAME_WIDTH/2, GAME_HEIGHT/2 - 20, 
-          `Level ${this.level - 1} Complete!`, { fontSize: '24px', fill: '#ffffff' })
+          `Level ${completedLevel} Complete!`, { fontSize: '24px', fill: '#ffffff' })
           .setOrigin(0.5)
           .setScrollFactor(0);
           
@@ -430,6 +493,11 @@
       
       gameOver() {
         this.physics.pause();
+        
+        // Stop trail when game is over
+        if (this.playerTrail.emitting) {
+          this.playerTrail.stop();
+        }
         
         const gameOverText = this.add.text(GAME_WIDTH/2, GAME_HEIGHT/2, 
           'GAME OVER', { fontSize: '32px', fill: '#ff0000' })
