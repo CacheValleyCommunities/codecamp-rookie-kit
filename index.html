@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quantum Jumper - Phaser 3</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #222;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      font-family: monospace;
+    }
+    #game-container {
+      position: relative;
+    }
+    .game-title {
+      color: #5f5fff;
+      text-align: center;
+      font-size: 24px;
+      margin-bottom: 10px;
+      text-shadow: 0 0 10px rgba(95, 95, 255, 0.8);
+    }
+    .instructions {
+      color: white;
+      text-align: center;
+      font-size: 14px;
+      margin-top: 10px;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.70.0/phaser.min.js"></script>
+</head>
+<body>
+  <div id="game-container">
+    <div class="game-title">QUANTUM JUMPER</div>
+    <div class="instructions">
+      Arrow keys or WASD to move, Space to shift dimensions<br>
+      Reach the green portal to advance to the next level!
+    </div>
+  </div>
+
+  <script>
+    const GAME_WIDTH = 800;
+    const GAME_HEIGHT = 400;
+    const WORLD_WIDTH = GAME_WIDTH * 3;
+
+    class QuantumJumper extends Phaser.Scene {
+      constructor() {
+        super({ key: 'GameScene' });
+      }
+
+      preload() {
+        this.createTextures();
+      }
+
+      createTextures() {
+        // Player textures
+        const playerLight = this.add.graphics();
+        playerLight.fillStyle(0xffffff);
+        playerLight.fillRect(0, 0, 16, 16);
+        playerLight.fillStyle(0x000000);
+        playerLight.fillRect(6, 4, 2, 2);
+        playerLight.fillRect(12, 4, 2, 2);
+        playerLight.generateTexture('player_light', 16, 16);
+        playerLight.destroy();
+
+        const playerDark = this.add.graphics();
+        playerDark.fillStyle(0x444444);
+        playerDark.fillRect(0, 0, 16, 16);
+        playerDark.fillStyle(0xffffff);
+        playerDark.fillRect(6, 4, 2, 2);
+        playerDark.fillRect(12, 4, 2, 2);
+        playerDark.generateTexture('player_dark', 16, 16);
+        playerDark.destroy();
+
+        // Platform textures
+        const platformLight = this.add.graphics();
+        platformLight.fillStyle(0x90EE90);
+        platformLight.fillRect(0, 0, 16, 16);
+        platformLight.generateTexture('platform_light', 16, 16);
+        platformLight.destroy();
+
+        const platformDark = this.add.graphics();
+        platformDark.fillStyle(0x800080);
+        platformDark.fillRect(0, 0, 16, 16);
+        platformDark.generateTexture('platform_dark', 16, 16);
+        platformDark.destroy();
+
+        // Collectible textures
+        const collectibleLight = this.add.graphics();
+        collectibleLight.fillStyle(0xFFD700);
+        collectibleLight.fillRect(0, 0, 8, 8);
+        collectibleLight.generateTexture('collectible_light', 8, 8);
+        collectibleLight.destroy();
+
+        const collectibleDark = this.add.graphics();
+        collectibleDark.fillStyle(0xFF69B4);
+        collectibleDark.fillRect(0, 0, 8, 8);
+        collectibleDark.generateTexture('collectible_dark', 8, 8);
+        collectibleDark.destroy();
+
+        // Hazard texture
+        const hazard = this.add.graphics();
+        hazard.fillStyle(0xff0000);
+        hazard.fillRect(0, 0, 12, 12);
+        hazard.generateTexture('hazard', 12, 12);
+        hazard.destroy();
+
+        // Portal texture
+        const portal = this.add.graphics();
+        portal.fillStyle(0x00ff00);
+        portal.fillRect(0, 0, 20, 30);
+        portal.generateTexture('portal', 20, 30);
+        portal.destroy();
+
+        // Particle texture
+        const particle = this.add.graphics();
+        particle.fillStyle(0xffffff);
+        particle.fillRect(0, 0, 4, 4);
+        particle.generateTexture('particle', 4, 4);
+        particle.destroy();
+      }
+
+      create() {
+        this.level = 1;
+        this.score = 0;
+        this.lives = 3;
+        this.dimension = 0;
+        
+        this.physics.world.setBounds(0, 0, WORLD_WIDTH, GAME_HEIGHT);
+        
+        this.background = this.add.rectangle(WORLD_WIDTH/2, GAME_HEIGHT/2, WORLD_WIDTH, GAME_HEIGHT, 0x87CEEB);
+        this.background.setScrollFactor(0.1);
+        
+        this.player = this.physics.add.sprite(50, 200, 'player_light');
+        // Remove setCollideWorldBounds so player can fall off the bottom
+        this.player.setBounce(0.2);
+        
+        // Add jump state tracking for variable gravity
+        this.player.jumpState = 'none'; // 'none', 'rising', 'falling'
+        
+        this.platforms = this.physics.add.staticGroup();
+        this.collectibles = this.physics.add.group();
+        this.hazards = this.add.group(); // Regular group, not physics group
+        
+        this.portal = null;
+        
+        this.particles = this.add.particles(0, 0, 'particle', {
+          speed: { min: 50, max: 150 },
+          scale: { start: 1, end: 0 },
+          lifespan: 600,
+          emitting: false
+        });
+        
+        // Create player trail emitter
+        this.playerTrail = this.add.particles(0, 0, 'particle', {
+          speed: { min: 10, max: 30 },
+          scale: { start: 2, end: 0.5 }, // Much bigger particles
+          lifespan: 600, // Longer lasting
+          frequency: 20, // Very frequent
+          emitting: false,
+          alpha: { start: 1, end: 0 }, // Fully opaque at start
+          quantity: 3, // More particles per emission
+          blendMode: 'ADD' // Make them glow
+        });
+        
+        this.generateLevel();
+        
+        this.physics.add.collider(this.player, this.platforms);
+        // Remove physics overlap for collectibles since we'll handle manually
+        
+        this.cursors = this.input.keyboard.createCursorKeys();
+        this.spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+        
+        // Add WASD keys
+        this.wasd = this.input.keyboard.addKeys('W,S,A,D');
+        
+        this.cameras.main.setBounds(0, 0, WORLD_WIDTH, GAME_HEIGHT);
+        this.cameras.main.startFollow(this.player, true, 0.08, 0.08);
+        
+        this.createUI();
+      }
+
+      createUI() {
+        this.scoreText = this.add.text(16, 16, 'Score: 0', { 
+          fontSize: '18px', 
+          fill: '#fff' 
+        }).setScrollFactor(0);
+        
+        this.livesText = this.add.text(16, 40, 'Lives: 3', { 
+          fontSize: '18px', 
+          fill: '#fff' 
+        }).setScrollFactor(0);
+        
+        this.dimensionText = this.add.text(16, 64, 'Dimension: Light', { 
+          fontSize: '18px', 
+          fill: '#5f5fff'
+        }).setScrollFactor(0);
+        
+        this.levelText = this.add.text(GAME_WIDTH - 120, 16, 'Level: 1', { 
+          fontSize: '18px', 
+          fill: '#fff'
+        }).setScrollFactor(0);
+      }
+
+      update() {
+        if (!this.player || !this.player.body) return;
+
+        // Debug player position continuously
+        if (this.player.y > GAME_HEIGHT - 50) { // Start logging when getting close to bottom
+          console.log(`Player Y position: ${this.player.y}, GAME_HEIGHT: ${GAME_HEIGHT}`);
+        }
+
+        // Handle movement with both arrow keys and WASD
+        if (this.cursors.left.isDown || this.wasd.A.isDown) {
+          this.player.setVelocityX(-160);
+        } else if (this.cursors.right.isDown || this.wasd.D.isDown) {
+          this.player.setVelocityX(160);
+        } else {
+          this.player.setVelocityX(0);
+        }
+        
+        // Handle jumping with both up arrow/W key
+        // Make sure jumping works in both dimensions
+        const isOnGround = this.player.body.touching.down;
+        
+        if ((this.cursors.up.isDown || this.wasd.W.isDown) && isOnGround) {
+          this.player.setVelocityY(-400);
+          this.player.jumpState = 'rising';
+          console.log(`Jumping in dimension ${this.dimension}, on ground: ${isOnGround}`);
+        }
+        
+        // Variable gravity based on jump state
+        if (this.player.jumpState === 'rising' && this.player.body.velocity.y >= 0) {
+          // Player has reached apex, now falling
+          this.player.jumpState = 'falling';
+          this.player.body.setGravityY(600); // Extra gravity for faster fall
+        } else if (this.player.jumpState === 'falling' && this.player.body.touching.down) {
+          // Player landed, reset jump state and gravity
+          this.player.jumpState = 'none';
+          this.player.body.setGravityY(0); // Reset to world gravity
+        } else if (this.player.jumpState === 'none' && !this.player.body.touching.down) {
+          // Player is falling without having jumped (walked off platform)
+          this.player.jumpState = 'falling';
+          this.player.body.setGravityY(600);
+        }
+        
+        // Dimension shift with spacebar
+        if (Phaser.Input.Keyboard.JustDown(this.spaceKey)) {
+          this.shiftDimension();
+        }
+        
+        // Check if player fell off the bottom of the map - MOVED TO TOP OF CHECKS
+        if (this.player.y > GAME_HEIGHT - 10) { // Trigger slightly before bottom to be safe
+          console.log(`DEATH TRIGGERED! Player fell off map at Y: ${this.player.y}, GAME_HEIGHT: ${GAME_HEIGHT}`);
+          this.hitHazard(this.player, null); // Use hitHazard which handles life loss
+          return; // Exit early to prevent other updates
+        }
+        
+        // Check portal collision manually
+        if (this.portal && Phaser.Geom.Intersects.RectangleToRectangle(this.player.getBounds(), this.portal.getBounds())) {
+          console.log('Portal collision detected! Advancing to next level...');
+          this.nextLevel();
+        }
+        
+        // Check collectible collisions manually
+        this.collectibles.children.entries.forEach(collectible => {
+          if (collectible.visible && !collectible.collected && 
+              Phaser.Geom.Intersects.RectangleToRectangle(this.player.getBounds(), collectible.getBounds())) {
+            if (this.checkCollectibleVisibility(this.player, collectible)) {
+              this.collectItem(this.player, collectible);
+            }
+          }
+        });
+        
+        // Check hazard collisions manually
+        this.hazards.children.entries.forEach(hazard => {
+          if (hazard.visible && Phaser.Geom.Intersects.RectangleToRectangle(this.player.getBounds(), hazard.getBounds())) {
+            if (this.checkHazardVisibility(this.player, hazard)) {
+              this.hitHazard(this.player, hazard);
+            }
+          }
+        });
+        
+        this.updateVisibility();
+
+        if (this.level >= 3) {
+          this.hazards.children.entries.forEach(hazard => {
+            if (hazard.moveSpeed) {
+              hazard.x += hazard.moveSpeed;
+              if (hazard.x <= hazard.startX - 50 || hazard.x >= hazard.startX + 50) {
+                hazard.moveSpeed *= -1;
+              }
+            }
+          });
+        }
+      }
+      
+      shiftDimension() {
+        this.dimension = 1 - this.dimension;
+        
+        this.player.setTexture(this.dimension === 0 ? 'player_light' : 'player_dark');
+        
+        this.dimensionText.setText('Dimension: ' + (this.dimension === 0 ? 'Light' : 'Dark'));
+        this.dimensionText.setFill(this.dimension === 0 ? '#5f5fff' : '#ff5f5f');
+        
+        if (this.dimension === 0) {
+          this.background.setFillStyle(0x87CEEB);
+          this.cameras.main.setBackgroundColor('#87CEEB');
+        } else {
+          this.background.setFillStyle(0x2F1B3C);
+          this.cameras.main.setBackgroundColor('#2F1B3C');
+        }
+        
+        this.particles.emitParticleAt(this.player.x, this.player.y, 20);
+        
+        // Remove gravity manipulation - keep normal gravity in both dimensions
+        // The challenge comes from different platform layouts, not physics changes
+        
+        this.collectibles.children.entries.forEach(collectible => {
+          if (collectible.body) {
+            collectible.body.setGravityY(-600); // Updated to match new world gravity
+            collectible.body.setVelocity(0, 0);
+          }
+        });
+        
+        this.updateVisibility();
+      }
+      
+      updateVisibility() {
+        this.platforms.children.entries.forEach(platform => {
+          const visible = platform.dimension === this.dimension || platform.dimension === 2;
+          platform.setVisible(visible);
+          platform.body.enable = visible;
+        });
+        
+        this.collectibles.children.entries.forEach(collectible => {
+          const visible = !collectible.collected && (collectible.dimension === this.dimension || collectible.dimension === 2);
+          collectible.setVisible(visible);
+          if (collectible.body) collectible.body.enable = visible;
+        });
+        
+        this.hazards.children.entries.forEach(hazard => {
+          const visible = hazard.dimension === this.dimension || hazard.dimension === 2;
+          hazard.setVisible(visible);
+          // No need to enable/disable body since they're regular sprites
+        });
+        
+        if (this.portal) {
+          this.portal.setVisible(true);
+          // No need to enable body since it's not a physics sprite
+        }
+      }
+      
+      checkCollectibleVisibility(player, collectible) {
+        return collectible.dimension === this.dimension || collectible.dimension === 2;
+      }
+      
+      checkHazardVisibility(player, hazard) {
+        return hazard.dimension === this.dimension || hazard.dimension === 2;
+      }
+      
+      collectItem(player, collectible) {
+        // Mark as collected and hide
+        collectible.collected = true;
+        collectible.setVisible(false);
+        
+        this.score += 10;
+        this.scoreText.setText('Score: ' + this.score);
+        
+        this.particles.emitParticleAt(collectible.x, collectible.y, 10);
+      }
+      
+      hitHazard(player, hazard) {
+        this.lives--;
+        this.livesText.setText('Lives: ' + this.lives);
+        
+        this.particles.emitParticleAt(player.x, player.y, 30);
+        
+        player.setPosition(50, 200);
+        player.setVelocity(0, 0);
+        
+        if (this.lives <= 0) {
+          this.gameOver();
+        }
+      }
+      
+      nextLevel() {
+        // Disable portal temporarily to prevent multiple triggers
+        if (this.portal) {
+          this.portal.setVisible(false);
+        }
+        
+        this.level++;
+        this.levelText.setText('Level: ' + this.level);
+        
+        // Create level complete message
+        const overlay = this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.7)
+          .setOrigin(0)
+          .setScrollFactor(0);
+        
+        const levelText = this.add.text(GAME_WIDTH/2, GAME_HEIGHT/2 - 20, 
+          `Level ${this.level - 1} Complete!`, { fontSize: '24px', fill: '#ffffff' })
+          .setOrigin(0.5)
+          .setScrollFactor(0);
+          
+        const scoreText = this.add.text(GAME_WIDTH/2, GAME_HEIGHT/2 + 10, 
+          `Score: ${this.score}`, { fontSize: '18px', fill: '#ffffff' })
+          .setOrigin(0.5)
+          .setScrollFactor(0);
+          
+        const nextText = this.add.text(GAME_WIDTH/2, GAME_HEIGHT/2 + 40, 
+          'Loading next level...', { fontSize: '16px', fill: '#ffffff' })
+          .setOrigin(0.5)
+          .setScrollFactor(0);
+        
+        // Generate next level after delay
+        this.time.delayedCall(2000, () => {
+          overlay.destroy();
+          levelText.destroy();
+          scoreText.destroy();
+          nextText.destroy();
+          this.generateLevel(); // This will create a new level with new portal
+        });
+      }
+      
+      gameOver() {
+        this.physics.pause();
+        
+        const gameOverText = this.add.text(GAME_WIDTH/2, GAME_HEIGHT/2, 
+          'GAME OVER', { fontSize: '32px', fill: '#ff0000' })
+          .setOrigin(0.5)
+          .setScrollFactor(0);
+          
+        const finalScoreText = this.add.text(GAME_WIDTH/2, GAME_HEIGHT/2 + 40, 
+          'Final Score: ' + this.score, { fontSize: '24px', fill: '#fff' })
+          .setOrigin(0.5)
+          .setScrollFactor(0);
+          
+        const restartText = this.add.text(GAME_WIDTH/2, GAME_HEIGHT/2 + 80, 
+          'Click to restart', { fontSize: '18px', fill: '#fff' })
+          .setOrigin(0.5)
+          .setScrollFactor(0);
+          
+        this.input.once('pointerdown', () => {
+          this.scene.restart();
+        });
+      }
+      
+      generateLevel() {
+        this.platforms.clear(true, true);
+        this.collectibles.clear(true, true);
+        this.hazards.clear(true, true);
+        
+        if (this.portal) {
+          this.portal.destroy();
+        }
+        
+        this.player.setPosition(50, 200);
+        this.player.setVelocity(0, 0);
+        
+        // Remove ground generation - players must use platforms or die
+        
+        // Create starting platform
+        for (let x = 0; x < 100; x += 16) {
+          const platform = this.platforms.create(x, 250, 'platform_light');
+          platform.dimension = 2;
+          platform.refreshBody();
+        }
+        
+        const segments = 8 + this.level * 2;
+        let lastX = 150;
+        let lastYLight = 200;
+        let lastYDark = 150;
+        
+        for (let i = 0; i < segments; i++) {
+          const widthLight = Phaser.Math.Between(80, 160);
+          const widthDark = Phaser.Math.Between(60, 140);
+          const gap = Phaser.Math.Between(60, 100 + this.level * 15);
+          
+          if (this.level === 1 || Math.random() < 0.7) {
+            const heightChangeLight = Phaser.Math.Between(-80, 80);
+            lastYLight = Phaser.Math.Clamp(lastYLight + heightChangeLight, 80, GAME_HEIGHT - 80);
+            
+            const platformCountLight = Math.ceil(widthLight / 16);
+            for (let j = 0; j < platformCountLight; j++) {
+              const platform = this.platforms.create(lastX + gap + j * 16, lastYLight, 'platform_light');
+              platform.dimension = 0;
+              platform.refreshBody();
+            }
+            
+            if (Math.random() < 0.7) {
+              const collectible = this.collectibles.create(lastX + gap + widthLight/2, lastYLight - 30, 'collectible_light');
+              collectible.dimension = 0;
+              collectible.collected = false; // Initialize collected state
+              collectible.setVisible(true);
+              collectible.body.setGravityY(-600); // Updated to match new world gravity
+              collectible.body.setVelocity(0, 0);
+              collectible.body.setImmovable(true);
+            }
+          }
+          
+          if (this.level > 1 && Math.random() < 0.6 + this.level * 0.1) {
+            const heightChangeDark = Phaser.Math.Between(-60, 100);
+            lastYDark = Phaser.Math.Clamp(lastYDark + heightChangeDark, 60, GAME_HEIGHT - 100);
+            const darkOffsetX = Phaser.Math.Between(-30, 50);
+            
+            const platformCountDark = Math.ceil(widthDark / 16);
+            for (let j = 0; j < platformCountDark; j++) {
+              const platform = this.platforms.create(lastX + gap + darkOffsetX + j * 16, lastYDark, 'platform_dark');
+              platform.dimension = 1;
+              platform.refreshBody();
+            }
+            
+            if (Math.random() < 0.7) {
+              const collectible = this.collectibles.create(lastX + gap + darkOffsetX + widthDark/2, lastYDark - 30, 'collectible_dark');
+              collectible.dimension = 1;
+              collectible.setVisible(true);
+              collectible.body.setGravityY(-300);
+              collectible.body.setVelocity(0, 0);
+              collectible.body.setImmovable(true);
+            }
+          }
+          
+          if (this.level > 1 && Math.random() < 0.3 + this.level * 0.1) {
+            const hazardDimension = Math.random() < 0.5 ? 0 : 1;
+            const hazardY = hazardDimension === 0 ? lastYLight - 20 : lastYDark - 20;
+            
+            const hazard = this.add.sprite(lastX + gap/2, hazardY, 'hazard'); // Regular sprite, no physics
+            hazard.dimension = hazardDimension;
+            
+            if (this.level >= 3) {
+              hazard.startX = hazard.x;
+              hazard.moveSpeed = Phaser.Math.Between(1, 3) * (Math.random() < 0.5 ? -1 : 1);
+            }
+            
+            // Add to hazards group manually
+            this.hazards.add(hazard);
+          }
+          
+          lastX = lastX + gap + Math.max(widthLight, widthDark);
+        }
+        
+        // Debug platform generation
+        console.log(`Generated ${this.platforms.children.size} platforms for level ${this.level}`);
+        console.log(`Light platforms in dimension 0, dark platforms in dimension 1`);
+        
+        // Count platforms by dimension
+        let lightCount = 0;
+        let darkCount = 0;
+        let bothCount = 0;
+        
+        this.platforms.children.entries.forEach(platform => {
+          if (platform.dimension === 0) lightCount++;
+          else if (platform.dimension === 1) darkCount++;
+          else if (platform.dimension === 2) bothCount++;
+        });
+        
+        console.log(`Platform distribution: Light(0)=${lightCount}, Dark(1)=${darkCount}, Both(2)=${bothCount}`);
+        
+        // Place portal at the actual end of the generated platforms
+        console.log(`Level ${this.level}: lastX = ${lastX}, WORLD_WIDTH = ${WORLD_WIDTH}`);
+        
+        // Place portal after the last platform, but ensure it's within world bounds
+        const portalX = Math.min(lastX + 50, WORLD_WIDTH - 100); // 50 pixels after last platform
+        const portalY = Math.min(lastYLight, lastYDark) - 50; // Above the lowest platform path
+        
+        // Destroy old portal if it exists
+        if (this.portal) {
+          this.portal.destroy();
+        }
+        
+        this.portal = this.add.sprite(portalX, portalY, 'portal');
+        this.portal.setVisible(true);
+        this.portal.dimension = 2;
+        this.portal.setScale(2); // Make it bigger to be more visible
+        
+        console.log(`Level ${this.level}: Portal created at ${this.portal.x}, ${this.portal.y}`);
+        console.log(`Portal Y calculation: lastYLight=${lastYLight}, lastYDark=${lastYDark}, portalY=${portalY}`);
+        console.log(`Portal texture: ${this.portal.texture.key}`);
+        console.log(`Portal visible: ${this.portal.visible}`);
+        
+        // Check portal collision manually since it's not a physics sprite
+        // We'll handle this in the update function
+        
+        this.updateVisibility();
+      }
+    }
+
+    const config = {
+      type: Phaser.AUTO,
+      width: GAME_WIDTH,
+      height: GAME_HEIGHT,
+      pixelArt: true,
+      parent: 'game-container',
+      physics: {
+        default: 'arcade',
+        arcade: {
+          gravity: { y: 600 }, // Increased from 300 to 600 for snappier movement
+          debug: false
+        }
+      },
+      scene: QuantumJumper
+    };
+
+    const game = new Phaser.Game(config);
+  </script>
+</body>
+</html>
